@@ -38,16 +38,24 @@
 
     "use strict";
 
-    var atmosphere = {},
-        guid,
-        offline = false,
+    var offline = false,
         requests = [],
         callbacks = [],
-        uuid = 0,
+        uuid = 0;
+
+    /**
+     * {boolean} If window beforeUnload event has been called.
+     * Flag will be reset after 5000 ms
+     *
+     * @private
+     */
+    var _beforeUnloadState = false;
+
+    var guid,
         hasOwn = Object.prototype.hasOwnProperty;
 
-    atmosphere = {
-        version: "2.3.9.vaadin1-javascript",
+    var atmosphere = {
+        version: "2.3.9.vaadin2-javascript",
         onError: function (response) {
         },
         onClose: function (response) {
@@ -198,6 +206,7 @@
                 handleOnlineOffline: true,
                 maxWebsocketErrorRetries: 1,
                 curWebsocketErrorRetries: 0,
+                useBeforeUnloadForCleanup: true,
                 onError: function (response) {
                 },
                 onClose: function (response) {
@@ -350,12 +359,11 @@
             var _sharingKey;
 
             /**
-             * {boolean} If window beforeUnload event has been called.
-             * Flag will be reset after 5000 ms
-             *
+             * {number} Holds the timeout ID for the beforeUnload flag reset.
+             * 
              * @private
              */
-            var _beforeUnloadState = false;
+            var _beforeUnloadTimeoutId;            
 
             // Automatic call to subscribe
             _subscribe(options);
@@ -1909,7 +1917,7 @@
                 };
 
                 var reconnectF = function (force){
-                    if(atmosphere._beforeUnloadState){
+                    if(_beforeUnloadState){
                         // ATMOSPHERE-JAVASCRIPT-143: Delay reconnect to avoid reconnect attempts before an actual unload (we don't know if an unload will happen, yet)
                         atmosphere.util.debug(new Date() + " Atmosphere: reconnectF: execution delayed due to _beforeUnloadState flag");
                         setTimeout(function () {
@@ -3374,16 +3382,40 @@
     atmosphere.callbacks = {
         unload: function() {
             atmosphere.util.debug(new Date() + " Atmosphere: " + "unload event");
-            atmosphere.unsubscribe();
+            
+            // Check if we should use the old unload behavior or if beforeunload hasn't handled cleanup
+            var shouldCleanupInUnload = requests.length > 0 && 
+                (requests[0].request.useBeforeUnloadForCleanup === false || !_beforeUnloadState);
+            
+            if (shouldCleanupInUnload) {
+                atmosphere.unsubscribe();
+            }            
         },
         beforeUnload: function() {
             atmosphere.util.debug(new Date() + " Atmosphere: " + "beforeunload event");
 
+            // If another unload attempt was made within the 5000ms timeout
+            if (atmosphere._beforeUnloadTimeoutId != null) {
+                clearTimeout(atmosphere._beforeUnloadTimeoutId);
+            }
+
             // ATMOSPHERE-JAVASCRIPT-143: Delay reconnect to avoid reconnect attempts before an actual unload (we don't know if an unload will happen, yet)
-            atmosphere._beforeUnloadState = true;
-            setTimeout(function () {
+            _beforeUnloadState = true;
+
+            
+            // Check if we should cleanup in beforeunload (default behavior for better bfcache compatibility)
+            var shouldCleanupInBeforeUnload = requests.length > 0 && 
+                requests[0].request.useBeforeUnloadForCleanup !== false;
+            
+            if (shouldCleanupInBeforeUnload) {
+                // Primary cleanup now happens here instead of in unload event
+                // This ensures compatibility with Chrome's bfcache and follows modern best practices
+                atmosphere.unsubscribe();
+            }
+
+            atmosphere._beforeUnloadTimeoutId = setTimeout(function () {
                 atmosphere.util.debug(new Date() + " Atmosphere: " + "beforeunload event timeout reached. Reset _beforeUnloadState flag");
-                atmosphere._beforeUnloadState = false;
+                _beforeUnloadState = false;
             }, 5000);
         },
         offline: function() {
