@@ -1,5 +1,5 @@
 /*
- * Copyright 2018 Async-IO.org
+ * Copyright 2011-2019 Async-IO.org
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -47,7 +47,7 @@
         hasOwn = Object.prototype.hasOwnProperty;
 
     atmosphere = {
-        version: "2.3.6-javascript",
+        version: "2.3.9.vaadin1-javascript",
         onError: function (response) {
         },
         onClose: function (response) {
@@ -1479,7 +1479,7 @@
                         clearTimeout(_request.heartbeatTimer);
                     }
                     
-                    if (++_request.curWebsocketErrorRetries < _request.maxWebsocketErrorRetries && _request.fallbackTransport !== 'websocket') {
+                    if (_request.curWebsocketErrorRetries++ < _request.maxWebsocketErrorRetries && _request.fallbackTransport !== 'websocket') {
                         _reconnectWithFallbackTransport("Failed to connect via Websocket. Downgrading to " + _request.fallbackTransport + " and resending");
                     }
                 };
@@ -1543,7 +1543,7 @@
 
                     if (_abortingConnection) {
                         atmosphere.util.log(_request.logLevel, ["Websocket closed normally"]);
-                    } else if (!webSocketOpened && _request.fallbackTransport !== 'websocket') {
+                    } else if (!webSocketOpened && _response.transport === 'websocket' && _request.fallbackTransport !== 'websocket') {
                         _reconnectWithFallbackTransport("Websocket failed on first connection attempt. Downgrading to " + _request.fallbackTransport + " and resending");
 
                     } else if (_request.reconnect && _response.transport === 'websocket' ) {
@@ -1749,7 +1749,7 @@
 
                 var reconnectInterval = _request.connectTimeout === -1 ? 0 : _request.connectTimeout;
                 if (_request.reconnect && _request.transport !== 'none' || _request.transport == null) {
-                	_request.transport = _request.fallbackTransport;
+                    _request.transport = _request.fallbackTransport;
                     _request.method = _request.fallbackMethod;
                     _response.transport = _request.fallbackTransport;
                     _response.state = '';
@@ -3104,14 +3104,14 @@
 
             // encodeURI and decodeURI are needed to normalize URL between IE and non-IE,
             // since IE doesn't encode the href property value and return it - http://jsfiddle.net/Yq9M8/1/
+
             var ua = window.navigator.userAgent;
             if(ua.indexOf('MSIE ')>0 || ua.indexOf('Trident/') > 0 || ua.indexOf('Edge/') > 0){
                 return atmosphere.util.fixedEncodeURI(decodeURI(div.firstChild.href));
             }
             return div.firstChild.href;
         },
-
-        // Fix IPv6 escaping, see: https://github.com/Atmosphere/atmosphere-javascript/pull/243
+        
         fixedEncodeURI: function (str) {
             return encodeURI(str).replace(/%5B/g, '[').replace(/%5D/g, ']');
         },
