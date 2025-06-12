@@ -51,11 +51,13 @@
      */
     var _beforeUnloadState = false;
 
+    var useBeforeUnloadForCleanup = true;
+
     var guid,
         hasOwn = Object.prototype.hasOwnProperty;
 
     var atmosphere = {
-        version: "2.3.9.vaadin2-javascript",
+        version: "2.3.9.vaadin4-javascript",
         onError: function (response) {
         },
         onClose: function (response) {
@@ -201,12 +203,11 @@
                     server: null
                 },
                 ackInterval: 0,
-                closeAsync: false,
+                closeAsync: true,
                 reconnectOnServerError: true,
                 handleOnlineOffline: true,
                 maxWebsocketErrorRetries: 1,
                 curWebsocketErrorRetries: 0,
-                useBeforeUnloadForCleanup: true,
                 onError: function (response) {
                 },
                 onClose: function (response) {
@@ -394,20 +395,24 @@
                 _init();
             }
 
+            function _canLog(level) {
+                return _canLog(level, _request.logLevel);
+            }
+
             /**
              * Returns true if the given level is equal or above the configured log level.
              *
              * @private
              */
-            function _canLog(level) {
+            function _canLog(level, configuredLevel) {
                 if (level == 'debug') {
-                    return _request.logLevel === 'debug';
+                    return configuredLevel === 'debug';
                 } else if (level == 'info') {
-                    return _request.logLevel === 'info' || _request.logLevel === 'debug';
+                    return configuredLevel === 'info' || configuredLevel === 'debug' || typeof (configuredLevel) === 'undefined';
                 } else if (level == 'warn') {
-                    return _request.logLevel === 'warn' || _request.logLevel === 'info' || _request.logLevel === 'debug';
+                    return configuredLevel === 'warn' || configuredLevel === 'info' || configuredLevel === 'debug' || typeof (configuredLevel) === 'undefined';
                 } else if (level == 'error') {
-                    return _request.logLevel === 'error' || _request.logLevel === 'warn' || _request.logLevel === 'info' || _request.logLevel === 'debug';
+                    return configuredLevel === 'error' || configuredLevel === 'warn' || configuredLevel === 'info' || configuredLevel === 'debug' || typeof (configuredLevel) === 'undefined';
                 } else {
                     return false;
                 }
@@ -2142,13 +2147,17 @@
                         ajaxRequest.send(rq.data);
                         _subscribed = true;
                     } catch (e) {
-                        atmosphere.util.log(rq.logLevel, ["Unable to connect to " + rq.url]);
+                        if (_canLog('error', rq.logLevel)) {
+                          atmosphere.util.error("Unable to connect to " + rq.url);
+                          atmosphere.util.error(e);
+                        }
+
                         _onError(0, e);
                     }
 
                 } else {
                     if (rq.logLevel === 'debug') {
-                        atmosphere.util.log(rq.logLevel, ["Max re-connection reached."]);
+                        atmosphere.util.debug("Max re-connection reached.");
                     }
                     _onError(0, "maxRequest reached");
                 }
@@ -3284,7 +3293,7 @@
 
         log: function (level, args) {
             if (window.console) {
-                var logger = window.console[level];
+                var logger = window.console[typeof (level) !== 'undefined' ? level : 'info'];
                 if (typeof logger === 'function') {
                     logger.apply(window.console, args);
                 }
@@ -3384,10 +3393,7 @@
             atmosphere.util.debug(new Date() + " Atmosphere: " + "unload event");
             
             // Check if we should use the old unload behavior or if beforeunload hasn't handled cleanup
-            var shouldCleanupInUnload = requests.length > 0 && 
-                (requests[0].request.useBeforeUnloadForCleanup === false || !_beforeUnloadState);
-            
-            if (shouldCleanupInUnload) {
+            if (!useBeforeUnloadForCleanup) {
                 atmosphere.unsubscribe();
             }            
         },
@@ -3404,10 +3410,7 @@
 
             
             // Check if we should cleanup in beforeunload (default behavior for better bfcache compatibility)
-            var shouldCleanupInBeforeUnload = requests.length > 0 && 
-                requests[0].request.useBeforeUnloadForCleanup !== false;
-            
-            if (shouldCleanupInBeforeUnload) {
+            if (useBeforeUnloadForCleanup) {
                 // Primary cleanup now happens here instead of in unload event
                 // This ensures compatibility with Chrome's bfcache and follows modern best practices
                 atmosphere.unsubscribe();
@@ -3451,14 +3454,19 @@
     };
 
     atmosphere.bindEvents = function() {
-        atmosphere.util.on(window, "unload", atmosphere.callbacks.unload);
+        if (!useBeforeUnloadForCleanup) {
+          atmosphere.util.on(window, "unload", atmosphere.callbacks.unload);
+        } 
+        //atmosphere.util.on(window, "pagehide", function(event) {atmosphere.util.error("pagehide called " + event.persisted);});
         atmosphere.util.on(window, "beforeunload", atmosphere.callbacks.beforeUnload);
         atmosphere.util.on(window, "offline", atmosphere.callbacks.offline);
         atmosphere.util.on(window, "online", atmosphere.callbacks.online);
     };
 
     atmosphere.unbindEvents = function() {
-        atmosphere.util.off(window, "unload", atmosphere.callbacks.unload);
+        if (!useBeforeUnloadForCleanup) {
+          atmosphere.util.off(window, "unload", atmosphere.callbacks.unload);
+        }
         atmosphere.util.off(window, "beforeunload", atmosphere.callbacks.beforeUnload);
         atmosphere.util.off(window, "offline", atmosphere.callbacks.offline);
         atmosphere.util.off(window, "online", atmosphere.callbacks.online);
