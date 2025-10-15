@@ -2145,9 +2145,11 @@
                     };
 
                     try {
+                        sent = false;
+
                         if (forceRequest) 
                         {
-                            if ('keepalive' in new Request('')) {
+                            if (typeof fetch === "function" && 'keepalive' in new Request('')) {
 
                               _debug("Force Request -> send with keepAlive");                                
 
@@ -2157,24 +2159,34 @@
                                 headers: { "Content-Type": "application/json" },
                                 keepalive: true
                               });
+
+                              sent = true;
                             }
-                            else 
+                            else if (typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function")
                             {
                                 _debug("Force Request -> send with beacon");                                
 
                                 const data = new Blob([rq.data], {type: "application/json"});
                                 const res = navigator.sendBeacon(rq.url, data);
 
-                                if (!res) {
+                                if (res) 
+                                {
+                                    sent = true;
+                                }
+                                else 
+                                {
                                   _debug("Force Request -> send becaon failed -> send normal");                                
-
-                                  ajaxRequest.send(rq.data);
                                 }
                             }
+                            else
+                            {
+                                _debug("Force Request -> send send normal");                                
+                            }
                         }
-                        else
+
+                        if (!sent)
                         {
-                            ajaxRequest.send(rq.data);
+                           ajaxRequest.send(rq.data);   
                         }
 
                         _subscribed = true;
