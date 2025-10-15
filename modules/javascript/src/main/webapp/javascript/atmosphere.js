@@ -2145,7 +2145,7 @@
                     };
 
                     try {
-                        sent = false;
+                        var sent = false;
 
                         if (forceRequest) 
                         {
