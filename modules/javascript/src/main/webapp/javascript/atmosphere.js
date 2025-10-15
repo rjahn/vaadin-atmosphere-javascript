@@ -51,13 +51,14 @@
      */
     var _beforeUnloadState = false;
 
+    var usePageHide = true;
     var useBeforeUnloadForCleanup = true;
 
     var guid,
         hasOwn = Object.prototype.hasOwnProperty;
 
     var atmosphere = {
-        version: "2.3.9.vaadin4-javascript",
+        version: "2.3.9.vaadin5-javascript",
         onError: function (response) {
         },
         onClose: function (response) {
@@ -441,7 +442,7 @@
              *
              * @private
              */
-            function _disconnect() {
+            function _disconnect(forceRequest) {
                 if (_request.enableProtocol && !_request.disableDisconnect && !_request.firstMessage) {
                     var query = "X-Atmosphere-Transport=close&X-Atmosphere-tracking-id=" + _request.uuid;
 
@@ -472,7 +473,7 @@
                         closeR.enableXDR = _request.enableXDR
                     }
                     closeR.async = _request.closeAsync;
-                    _pushOnClose("", closeR);
+                    _pushOnClose("", closeR, forceRequest);
                 }
             }
 
@@ -481,7 +482,7 @@
              *
              * @private
              */
-            function _close() {
+            function _close(forceRequest) {
                 _debug("Closing (AtmosphereRequest._close() called)");
 
                 _abortingConnection = true;
@@ -502,7 +503,7 @@
                 _response.partialMessage = "";
                 _request.curWebsocketErrorRetries = 0;
                 _invokeCallback();
-                _disconnect();
+                _disconnect(forceRequest);
                 _clearState();
             }
 
@@ -1877,7 +1878,7 @@
              * @param request {Object} request Request parameters, if undefined _request object will be used.
              * @private
              */
-            function _executeRequest(request) {
+            function _executeRequest(request, forceRequest) {
                 var rq = _request;
                 if ((request != null) || (typeof (request) !== 'undefined')) {
                     rq = request;
@@ -2144,7 +2145,38 @@
                     };
 
                     try {
-                        ajaxRequest.send(rq.data);
+                        if (forceRequest) 
+                        {
+                            if ('keepalive' in new Request('')) {
+
+                              _debug("Force Request -> send with keepAlive");                                
+
+                              fetch(rq.url, {
+                                method: "POST",
+                                body: rq.data,
+                                headers: { "Content-Type": "application/json" },
+                                keepalive: true
+                              });
+                            }
+                            else 
+                            {
+                                _debug("Force Request -> send with beacon");                                
+
+                                const data = new Blob([rq.data], {type: "application/json"});
+                                const res = navigator.sendBeacon(rq.url, data);
+
+                                if (!res) {
+                                  _debug("Force Request -> send becaon failed -> send normal");                                
+
+                                  ajaxRequest.send(rq.data);
+                                }
+                            }
+                        }
+                        else
+                        {
+                            ajaxRequest.send(rq.data);
+                        }
+
                         _subscribed = true;
                     } catch (e) {
                         if (_canLog('error', rq.logLevel)) {
@@ -2581,7 +2613,7 @@
                 }
             }
 
-            function _pushOnClose(message, rq) {
+            function _pushOnClose(message, rq, forceRequest) {
                 if (!rq) {
                     rq = _getPushRequest(message);
                 }
@@ -2592,7 +2624,7 @@
                 rq.force = true;
                 rq.suspend = false;
                 rq.timeout = 1000;
-                _executeRequest(rq);
+                _executeRequest(rq, forceRequest);
             }
 
             function _pushLocal(message) {
@@ -2948,8 +2980,8 @@
                 _execute();
             };
 
-            this.close = function () {
-                _close();
+            this.close = function (forceRequest) {
+                _close(forceRequest);
             };
 
             this.disconnect = function () {
@@ -3013,12 +3045,12 @@
         return rq;
     };
 
-    atmosphere.unsubscribe = function () {
+    atmosphere.unsubscribe = function (forceRequest) {
         if (requests.length > 0) {
             var requestsClone = [].concat(requests);
             for (var i = 0; i < requestsClone.length; i++) {
                 var rq = requestsClone[i];
-                rq.close();
+                rq.close(forceRequest);
                 clearTimeout(rq.response.request.id);
 
                 if (rq.heartbeatTimer) {
@@ -3393,7 +3425,7 @@
             atmosphere.util.debug(new Date() + " Atmosphere: " + "unload event");
             
             // Check if we should use the old unload behavior or if beforeunload hasn't handled cleanup
-            if (!useBeforeUnloadForCleanup) {
+            if (requests.length > 0 && !useBeforeUnloadForCleanup) {
                 atmosphere.unsubscribe();
             }            
         },
@@ -3410,7 +3442,7 @@
 
             
             // Check if we should cleanup in beforeunload (default behavior for better bfcache compatibility)
-            if (useBeforeUnloadForCleanup) {
+            if (requests.length > 0 && useBeforeUnloadForCleanup) {
                 // Primary cleanup now happens here instead of in unload event
                 // This ensures compatibility with Chrome's bfcache and follows modern best practices
                 atmosphere.unsubscribe();
@@ -3421,6 +3453,15 @@
                 _beforeUnloadState = false;
             }, 5000);
         },
+        pageHide: function (event) {
+            atmosphere.util.debug(new Date() + " Atmosphere: pagehide event");
+
+            // Only cleanup if page is being persisted to bfcache or actually unloading
+            // event.persisted indicates if page is entering bfcache
+            if (requests.length > 0) {
+                atmosphere.unsubscribe(true);
+            }
+        },        
         offline: function() {
             atmosphere.util.debug(new Date() + " Atmosphere: offline event");
             offline = true;
@@ -3454,20 +3495,28 @@
     };
 
     atmosphere.bindEvents = function() {
-        if (!useBeforeUnloadForCleanup) {
-          atmosphere.util.on(window, "unload", atmosphere.callbacks.unload);
-        } 
-        //atmosphere.util.on(window, "pagehide", function(event) {atmosphere.util.error("pagehide called " + event.persisted);});
-        atmosphere.util.on(window, "beforeunload", atmosphere.callbacks.beforeUnload);
+        // Use pagehide as the default modern approach (doesn't block bfcache)
+        if (usePageHide && 'onpagehide' in window) {
+            atmosphere.util.on(window, "pagehide", atmosphere.callbacks.pageHide);
+        }
+        // Fallback to beforeunload if pagehide is disabled or not supported
+        else if (useBeforeUnloadForCleanup) {
+            atmosphere.util.on(window, "beforeunload", atmosphere.callbacks.beforeUnload);
+        }
+        // Legacy unload event only if both modern options are disabled
+        else {
+            atmosphere.util.on(window, "unload", atmosphere.callbacks.unload);
+        }
+
         atmosphere.util.on(window, "offline", atmosphere.callbacks.offline);
         atmosphere.util.on(window, "online", atmosphere.callbacks.online);
     };
 
     atmosphere.unbindEvents = function() {
-        if (!useBeforeUnloadForCleanup) {
-          atmosphere.util.off(window, "unload", atmosphere.callbacks.unload);
-        }
+        // Unbind all possible unload-related events to ensure proper cleanup
+        atmosphere.util.off(window, "pagehide", atmosphere.callbacks.pageHide);        
         atmosphere.util.off(window, "beforeunload", atmosphere.callbacks.beforeUnload);
+        atmosphere.util.off(window, "unload", atmosphere.callbacks.unload);
         atmosphere.util.off(window, "offline", atmosphere.callbacks.offline);
         atmosphere.util.off(window, "online", atmosphere.callbacks.online);
     };
